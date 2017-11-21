@@ -110,7 +110,6 @@ class SlackHandler:
 
         payload = {
             'attachments': [attachment],
-            'channel': '@nailgun',
         }
 
         requests.post(self.hook_url, json=payload, timeout=5)
