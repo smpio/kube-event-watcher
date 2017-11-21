@@ -78,20 +78,20 @@ class SlackHandler:
         self.hook_url = hook_url
 
     def __call__(self, event):
+        involved_object = '{}/{}'.format(event.involved_object.namespace, event.involved_object.name)
+
         attachment = {
             'color': 'warning' if event.type.lower() == 'warning' else 'good',
-            'fallback': '{}: {}'.format(event.metadata.namespace, event.message),
+            'fallback': '{} {}: {}'.format(event.involved_object.kind, involved_object, event.message),
             'fields': [{
                 'title': 'Namespace',
                 'value': event.metadata.namespace,
-                'short': True,
+            }, {
+                'title': event.involved_object.kind,
+                'value': involved_object,
             }, {
                 'title': 'Message',
                 'value': event.message.strip(),
-            }, {
-                'title': 'Object',
-                'value': '{} {}'.format(event.involved_object.kind, event.involved_object.name),
-                'short': True,
             }, {
                 'title': 'Reason',
                 'value': event.reason,
