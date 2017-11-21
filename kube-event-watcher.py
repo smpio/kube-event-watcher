@@ -18,7 +18,8 @@ def main():
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument('--in-cluster', action='store_true', help='configure with in cluster kubeconfig')
     arg_parser.add_argument('--log-level', default='WARNING')
-    arg_parser.add_argument('--slack-hook-url')
+    arg_parser.add_argument('--slack-hook-url', help='send events to Slack')
+    arg_parser.add_argument('--stdout', action='store_true', help='print events to stdout')
     args = arg_parser.parse_args()
 
     logging.basicConfig(format='%(levelname)s: %(message)s', level=args.log_level)
@@ -33,7 +34,8 @@ def main():
 
     watcher = Watcher()
 
-    watcher.handlers.append(print_handler)
+    if args.stdout:
+        watcher.handlers.append(print_handler)
     if args.slack_hook_url:
         watcher.handlers.append(SlackHandler(args.slack_hook_url))
 
