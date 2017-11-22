@@ -20,6 +20,8 @@ def main():
     arg_parser.add_argument('--log-level', default='WARNING')
     arg_parser.add_argument('--slack-hook-url', help='send events to Slack')
     arg_parser.add_argument('--stdout', action='store_true', help='print events to stdout')
+    arg_parser.add_argument('--ignore-reasons', help='comma separated reasons to ignore',
+                            type=lambda x: x.split(','), default=[])
     args = arg_parser.parse_args()
 
     logging.basicConfig(format='%(levelname)s: %(message)s', level=args.log_level)
@@ -32,7 +34,7 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    watcher = Watcher()
+    watcher = Watcher(args.ignore_reasons)
 
     if args.stdout:
         watcher.handlers.append(print_handler)
@@ -43,8 +45,9 @@ def main():
 
 
 class Watcher:
-    def __init__(self):
+    def __init__(self, ignore_reasons=None):
         self.handlers = []
+        self.ignored_reasons = ignore_reasons or []
 
     def watch(self):
         w = kubernetes.watch.Watch()
@@ -62,6 +65,10 @@ class Watcher:
 
             if event.last_timestamp < start_time:
                 log.info('Supressed event from the past: %s', event)
+                continue
+
+            if event.reason in self.ignored_reasons:
+                log.info('Supressed event with ignored reason: %s', event)
                 continue
 
             for handler in self.handlers:
