@@ -78,7 +78,10 @@ class SlackHandler:
         self.hook_url = hook_url
 
     def __call__(self, event):
-        involved_object = '{}/{}'.format(event.involved_object.namespace, event.involved_object.name)
+        if event.involved_object.namespace:
+            involved_object = '{}/{}'.format(event.involved_object.namespace, event.involved_object.name)
+        else:
+            involved_object = event.involved_object.name
 
         attachment = {
             'color': 'warning' if event.type.lower() == 'warning' else 'good',
