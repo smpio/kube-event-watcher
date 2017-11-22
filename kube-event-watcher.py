@@ -50,10 +50,18 @@ class Watcher:
         self.ignored_reasons = ignore_reasons or []
 
     def watch(self):
+        start_time = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+        while True:
+            start_time = self._watch(since_time=start_time).last_timestamp
+            log.info('Watch connection closed')
+
+    def _watch(self, since_time):
+        log.info('Watching events since %s', since_time)
+
         w = kubernetes.watch.Watch()
         v1 = kubernetes.client.CoreV1Api()
 
-        start_time = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+        event = None
 
         for change in w.stream(v1.list_event_for_all_namespaces):
             event = change['object']
@@ -63,7 +71,7 @@ class Watcher:
                 log.info('Skipping change type %s: %s', change_type, event)
                 continue
 
-            if event.last_timestamp < start_time:
+            if event.last_timestamp < since_time:
                 log.info('Supressed event from the past: %s', event)
                 continue
 
@@ -73,6 +81,8 @@ class Watcher:
 
             for handler in self.handlers:
                 handler(event)
+
+        return event
 
 
 def print_handler(event):
