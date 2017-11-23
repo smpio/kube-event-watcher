@@ -50,9 +50,9 @@ class Watcher:
         self.ignored_reasons = ignore_reasons or []
 
     def watch(self):
-        start_time = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
         while True:
-            start_time = self._watch(since_time=start_time).last_timestamp
+            start_time = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+            self._watch(since_time=start_time)
             log.info('Watch connection closed')
 
     def _watch(self, since_time):
@@ -60,8 +60,6 @@ class Watcher:
 
         w = kubernetes.watch.Watch()
         v1 = kubernetes.client.CoreV1Api()
-
-        event = None
 
         for change in w.stream(v1.list_event_for_all_namespaces):
             event = change['object']
@@ -81,8 +79,6 @@ class Watcher:
 
             for handler in self.handlers:
                 handler(event)
-
-        return event
 
 
 def print_handler(event):
