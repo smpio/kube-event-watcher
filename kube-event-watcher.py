@@ -31,7 +31,9 @@ def main():
     if args.in_cluster:
         kubernetes.config.load_incluster_config()
     else:
-        kubernetes.client.configuration.host = 'http://127.0.0.1:8001'
+        configuration = kubernetes.client.Configuration()
+        configuration.host = 'http://127.0.0.1:8001'
+        kubernetes.client.Configuration.set_default(configuration)
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
