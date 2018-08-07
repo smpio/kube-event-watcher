@@ -105,6 +105,10 @@ class WatcherThread(threading.Thread):
                 log.info('Skipping change type %s: %s', change_type, event)
                 continue
 
+            if event.last_timestamp is None:
+                log.info('Supressed event with unknown timestamp: %s', event)
+                continue
+
             if event.last_timestamp < since_time:
                 log.info('Supressed event from the past: %s', event)
                 continue
@@ -130,6 +134,10 @@ class SlackHandler:
         self.hook_url = hook_url
 
     def __call__(self, event):
+        if event.involved_object is None:
+            log.info('Ignoring event with unknown involved object: %s', event)
+            return
+
         if event.involved_object.namespace:
             involved_object = '{}/{}'.format(event.involved_object.namespace, event.involved_object.name)
         else:
