@@ -10,8 +10,11 @@ import requests
 import kubernetes.client
 import kubernetes.client.rest
 import kubernetes.config
+from urllib3.exceptions import ReadTimeoutError
 
 log = logging.getLogger(__name__)
+
+WATCH_TIMEOUT = 1 * 60 * 60
 
 
 def main():
@@ -57,8 +60,12 @@ class Watcher:
     def watch(self):
         while True:
             start_time = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
-            self._watch(since_time=start_time)
-            log.info('Watch connection closed')
+            try:
+                self._watch(since_time=start_time)
+            except ReadTimeoutError:
+                log.info('Watch timeout')
+            else:
+                log.info('Watch connection closed')
 
     def _watch(self, since_time):
         log.info('Watching events since %s', since_time)
@@ -66,7 +73,7 @@ class Watcher:
         w = kubernetes.watch.Watch()
         v1 = kubernetes.client.CoreV1Api()
 
-        for change in w.stream(v1.list_event_for_all_namespaces):
+        for change in w.stream(v1.list_event_for_all_namespaces, _request_timeout=WATCH_TIMEOUT):
             event = change['object']
             change_type = change['type']
 
@@ -86,6 +93,7 @@ class Watcher:
                 log.info('Supressed event with ignored reason: %s', event)
                 continue
 
+            # TODO: run handlers in separate thread
             for handler in self.handlers:
                 handler(event)
 
