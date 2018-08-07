@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
 import sys
+import queue
 import signal
 import logging
 import argparse
 import datetime
+import threading
 
 import requests
 import kubernetes.client
@@ -41,23 +43,45 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    watcher = Watcher(args.ignore_namespaces, args.ignore_reasons)
+    q = queue.Queue()
+
+    watcher = WatcherThread(q, args.ignore_namespaces, args.ignore_reasons)
+    watcher.start()
+
+    handlers = []
 
     if args.stdout:
-        watcher.handlers.append(print_handler)
+        handlers.append(print_handler)
     if args.slack_hook_url:
-        watcher.handlers.append(SlackHandler(args.slack_hook_url))
+        handlers.append(SlackHandler(args.slack_hook_url))
 
-    watcher.watch()
+    while True:
+        event = q.get()
+
+        if isinstance(event, Exception):
+            event.thread.join()
+            sys.exit(1)
+
+        for handle in handlers:
+            handle(event)
 
 
-class Watcher:
-    def __init__(self, ignore_namespaces=None, ignore_reasons=None):
-        self.handlers = []
+class WatcherThread(threading.Thread):
+    def __init__(self, queue, ignore_namespaces=None, ignore_reasons=None):
+        super().__init__(daemon=True)
+        self.queue = queue
         self.ignore_namespaces = ignore_namespaces or []
         self.ignored_reasons = ignore_reasons or []
 
-    def watch(self):
+    def run(self):
+        try:
+            return self._run()
+        except Exception as e:
+            e.thread = self
+            self.queue.put(e)
+            raise e
+
+    def _run(self):
         while True:
             start_time = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
             try:
@@ -93,9 +117,7 @@ class Watcher:
                 log.info('Supressed event with ignored reason: %s', event)
                 continue
 
-            # TODO: run handlers in separate thread
-            for handler in self.handlers:
-                handler(event)
+            self.queue.put(event)
 
 
 def print_handler(event):
