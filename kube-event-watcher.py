@@ -26,9 +26,11 @@ def main():
     arg_parser.add_argument('--slack-hook-url', help='send events to Slack')
     arg_parser.add_argument('--stdout', action='store_true', help='print events to stdout')
     arg_parser.add_argument('--ignore-namespaces', help='comma separated namespaces to ignore',
-                            type=lambda x: x.split(','), default=[])
+                            type=lambda x: map(strip, x.split(',')), default=[])
     arg_parser.add_argument('--ignore-reasons', help='comma separated reasons to ignore',
-                            type=lambda x: x.split(','), default=[])
+                            type=lambda x: map(strip, x.split(',')), default=[])
+    arg_parser.add_argument('--ignore', help='comma separated Kind/Reason to ignore, whitespaces are ignored',
+                            type=lambda x: map(parse_kind_reason, x.split(',')), default=[])
     args = arg_parser.parse_args()
 
     logging.basicConfig(format='%(levelname)s: %(message)s', level=args.log_level)
@@ -45,7 +47,7 @@ def main():
 
     q = queue.Queue()
 
-    watcher = WatcherThread(q, args.ignore_namespaces, args.ignore_reasons)
+    watcher = WatcherThread(q, args.ignore_namespaces, args.ignore_reasons, args.ignore)
     watcher.start()
 
     handlers = []
@@ -67,11 +69,12 @@ def main():
 
 
 class WatcherThread(threading.Thread):
-    def __init__(self, queue, ignore_namespaces=None, ignore_reasons=None):
+    def __init__(self, queue, ignore_namespaces=None, ignore_reasons=None, ignore=None):
         super().__init__(daemon=True)
         self.queue = queue
-        self.ignore_namespaces = ignore_namespaces or []
-        self.ignored_reasons = ignore_reasons or []
+        self.ignore_namespaces = frozenset(ignore_namespaces or [])
+        self.ignored_reasons = frozenset(ignore_reasons or [])
+        self.ignore = frozenset(ignore or [])
 
     def run(self):
         try:
@@ -101,7 +104,7 @@ class WatcherThread(threading.Thread):
             event = change['object']
             change_type = change['type']
 
-            if change_type not in ('ADDED', 'MODIFIED'):
+            if change_type != 'ADDED':
                 log.info('Skipping change type %s: %s', change_type, event)
                 continue
 
@@ -114,11 +117,15 @@ class WatcherThread(threading.Thread):
                 continue
 
             if event.metadata.namespace in self.ignore_namespaces:
-                log.info('Supressed event with ignored namespace: %s', event)
+                log.info('Supressed event from ignored namespace: %s', event)
                 continue
 
             if event.reason in self.ignored_reasons:
                 log.info('Supressed event with ignored reason: %s', event)
+                continue
+
+            if (event.involved_object.kind, event.reason) in self.ignore:
+                log.info('Supressed ignored Kind/Reason: %s', event)
                 continue
 
             self.queue.put(event)
@@ -235,6 +242,18 @@ def shutdown(signum, frame):
     """
     log.info("Shutting down")
     sys.exit(0)
+
+
+def parse_kind_reason(s):
+    try:
+        kind, reason = s.strip().split('/', maxsplit=1)
+    except ValueError:
+        return None, None
+    return kind, reason
+
+
+def strip(s):
+    return s.strip()
 
 
 if __name__ == '__main__':
