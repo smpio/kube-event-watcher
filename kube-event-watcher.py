@@ -3,6 +3,7 @@
 import sys
 import queue
 import signal
+import random
 import logging
 import argparse
 import datetime
@@ -16,7 +17,7 @@ from urllib3.exceptions import ReadTimeoutError
 
 log = logging.getLogger(__name__)
 
-WATCH_TIMEOUT = 1 * 60 * 60
+MIN_WATCH_TIMEOUT = 5 * 60
 
 
 def main():
@@ -75,6 +76,7 @@ class WatcherThread(threading.Thread):
         self.ignore_namespaces = frozenset(ignore_namespaces or [])
         self.ignored_reasons = frozenset(ignore_reasons or [])
         self.ignore = frozenset(ignore or [])
+        self.resource_version = None
 
     def run(self):
         try:
@@ -85,35 +87,36 @@ class WatcherThread(threading.Thread):
             raise e
 
     def _run(self):
+        v1 = kubernetes.client.CoreV1Api()
+        event_list = v1.list_event_for_all_namespaces()
+        self.resource_version = event_list.metadata.resource_version
+
         while True:
-            start_time = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
             try:
-                self._watch(since_time=start_time)
+                self._watch()
             except ReadTimeoutError:
                 log.info('Watch timeout')
             else:
                 log.info('Watch connection closed')
 
-    def _watch(self, since_time):
-        log.info('Watching events since %s', since_time)
+    def _watch(self):
+        timeout = random.randint(MIN_WATCH_TIMEOUT, MIN_WATCH_TIMEOUT * 2)
+        log.info('Watching events since version %s, timeout %d seconds', self.resource_version, timeout)
 
         w = kubernetes.watch.Watch()
         v1 = kubernetes.client.CoreV1Api()
 
-        for change in w.stream(v1.list_event_for_all_namespaces, _request_timeout=WATCH_TIMEOUT):
+        kwargs = {
+            '_request_timeout': timeout,
+        }
+        if self.resource_version:
+            kwargs['resource_version'] = self.resource_version
+
+        for change in w.stream(v1.list_event_for_all_namespaces, **kwargs):
             event = change['object']
-            change_type = change['type']
+            self.resource_version = event.metadata.resource_version
 
-            if change_type != 'ADDED':
-                log.info('Skipping change type %s: %s', change_type, event)
-                continue
-
-            if event.last_timestamp is None:
-                log.info('Supressed event with unknown timestamp: %s', event)
-                continue
-
-            if event.last_timestamp < since_time:
-                log.info('Supressed event from the past: %s', event)
+            if change['type'] != 'ADDED':
                 continue
 
             if event.metadata.namespace in self.ignore_namespaces:
@@ -132,8 +135,7 @@ class WatcherThread(threading.Thread):
 
 
 def print_handler(event):
-    print(event)
-    print()
+    print(event.last_timestamp, event.involved_object.kind, event.reason)
 
 
 class SlackHandler:
