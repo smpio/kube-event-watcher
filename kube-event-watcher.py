@@ -120,15 +120,15 @@ class WatcherThread(threading.Thread):
                 continue
 
             if event.metadata.namespace in self.ignore_namespaces:
-                log.info('Supressed event from ignored namespace: %s', event)
+                log.info('Suppressed event from ignored namespace: %s', event)
                 continue
 
             if event.reason in self.ignored_reasons:
-                log.info('Supressed event with ignored reason: %s', event)
+                log.info('Suppressed event with ignored reason: %s', event)
                 continue
 
             if (event.involved_object.kind, event.reason) in self.ignore:
-                log.info('Supressed ignored Kind/Reason: %s', event)
+                log.info('Suppressed ignored Kind/Reason: %s', event)
                 continue
 
             self.queue.put(event)
