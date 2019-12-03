@@ -5,6 +5,7 @@ import queue
 import signal
 import random
 import logging
+import fnmatch
 import argparse
 import datetime
 import threading
@@ -26,12 +27,8 @@ def main():
     arg_parser.add_argument('--log-level', default='WARNING')
     arg_parser.add_argument('--slack-hook-url', help='send events to Slack')
     arg_parser.add_argument('--stdout', action='store_true', help='print events to stdout')
-    arg_parser.add_argument('--ignore-namespaces', help='comma separated namespaces to ignore',
-                            type=lambda x: map(strip, x.split(',')), default=[])
-    arg_parser.add_argument('--ignore-reasons', help='comma separated reasons to ignore',
-                            type=lambda x: map(strip, x.split(',')), default=[])
-    arg_parser.add_argument('--ignore', help='comma separated Kind/Reason to ignore, whitespaces are ignored',
-                            type=lambda x: map(parse_kind_reason, x.split(',')), default=[])
+    arg_parser.add_argument('--ignore', help='comma separated Kind:Namespace/Name:Reason glob patterns to ignore',
+                            type=lambda x: x.split(','), default=[])
     args = arg_parser.parse_args()
 
     logging.basicConfig(format='%(levelname)s: %(message)s', level=args.log_level)
@@ -48,7 +45,7 @@ def main():
 
     q = queue.Queue()
 
-    watcher = WatcherThread(q, args.ignore_namespaces, args.ignore_reasons, args.ignore)
+    watcher = WatcherThread(q, args.ignore)
     watcher.start()
 
     handlers = []
@@ -70,13 +67,12 @@ def main():
 
 
 class WatcherThread(threading.Thread):
-    def __init__(self, queue, ignore_namespaces=None, ignore_reasons=None, ignore=None):
+    def __init__(self, queue, ignore_patterns=None):
         super().__init__(daemon=True)
         self.queue = queue
-        self.ignore_namespaces = frozenset(ignore_namespaces or [])
-        self.ignored_reasons = frozenset(ignore_reasons or [])
-        self.ignore = frozenset(ignore or [])
+        self.ignore_patterns = ignore_patterns or []
         self.resource_version = None
+        self.ignore_patterns = [b for b in (a.strip() for a in self.ignore_patterns) if b]
 
     def run(self):
         try:
@@ -120,23 +116,24 @@ class WatcherThread(threading.Thread):
             if change['type'] != 'ADDED':
                 continue
 
-            if event.metadata.namespace in self.ignore_namespaces:
-                log.info('Suppressed event from ignored namespace: %s', event)
-                continue
-
-            if event.reason in self.ignored_reasons:
-                log.info('Suppressed event with ignored reason: %s', event)
-                continue
-
-            if (event.involved_object.kind, event.reason) in self.ignore:
-                log.info('Suppressed ignored Kind/Reason: %s', event)
+            if self.is_ignored(event):
                 continue
 
             self.queue.put(event)
 
+    def is_ignored(self, event):
+        formatted = format_event(event)
+
+        for pattern in self.ignore_patterns:
+            if fnmatch.fnmatch(formatted, pattern):
+                log.info('Suppressed event %s matching pattern %s', formatted, pattern)
+                return True
+
+        return False
+
 
 def print_handler(event):
-    print(event.last_timestamp, event.involved_object.kind, event.reason)
+    print(format_event(event))
 
 
 class SlackHandler:
@@ -148,20 +145,18 @@ class SlackHandler:
             log.info('Ignoring event with unknown involved object: %s', event)
             return
 
-        if event.involved_object.namespace:
-            involved_object = '{}/{}'.format(event.involved_object.namespace, event.involved_object.name)
-        else:
-            involved_object = event.involved_object.name
+        obj = format_involved_object(event)
+        kind = format_involved_object_kind(event)
 
         attachment = {
             'color': 'warning' if event.type.lower() == 'warning' else 'good',
-            'fallback': '{} {}: {}'.format(event.involved_object.kind, involved_object, event.message),
+            'fallback': f'{kind} {obj}: {event.message}',
             'fields': [{
                 'title': 'Namespace',
                 'value': event.metadata.namespace,
             }, {
-                'title': event.involved_object.kind,
-                'value': involved_object,
+                'title': kind,
+                'value': obj,
             }, {
                 'title': 'Message',
                 'value': event.message.strip(),
@@ -247,16 +242,24 @@ def shutdown(signum, frame):
     sys.exit(0)
 
 
-def parse_kind_reason(s):
-    try:
-        kind, reason = s.strip().split('/', maxsplit=1)
-    except ValueError:
-        return None, None
-    return kind, reason
+def format_event(event):
+    obj = format_involved_object(event)
+    kind = format_involved_object_kind(event)
+    return f'{kind}:{obj}:{event.reason}'
 
 
-def strip(s):
-    return s.strip()
+def format_involved_object(event):
+    if event.involved_object.namespace:
+        return f'{event.involved_object.namespace}/{event.involved_object.name}'
+    else:
+        return event.involved_object.name
+
+
+def format_involved_object_kind(event):
+    if event.involved_object.kind:
+        return event.involved_object.kind
+    else:
+        return ''
 
 
 if __name__ == '__main__':
