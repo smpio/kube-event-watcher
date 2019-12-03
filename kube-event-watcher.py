@@ -107,7 +107,8 @@ class WatcherThread(threading.Thread):
         v1 = kubernetes.client.CoreV1Api()
 
         kwargs = {
-            '_request_timeout': timeout,
+            'timeout_seconds': timeout,
+            '_request_timeout': timeout + 5,
         }
         if self.resource_version:
             kwargs['resource_version'] = self.resource_version
