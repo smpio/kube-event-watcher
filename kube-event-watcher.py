@@ -110,6 +110,9 @@ class WatcherThread(threading.Thread):
             kwargs['resource_version'] = self.resource_version
 
         for change in w.stream(v1.list_event_for_all_namespaces, **kwargs):
+            if change['type'] == 'ERROR':
+                raise Exception(change['object'])
+
             event = change['object']
             self.resource_version = event.metadata.resource_version
 
