@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import re
 import sys
 import queue
 import signal
@@ -19,6 +20,7 @@ from urllib3.exceptions import ReadTimeoutError
 log = logging.getLogger(__name__)
 
 MIN_WATCH_TIMEOUT = 5 * 60
+extended_pat_re = re.compile(r'.*\(.*\)')
 
 
 def main():
@@ -72,7 +74,7 @@ class WatcherThread(threading.Thread):
         self.queue = queue
         self.ignore_patterns = ignore_patterns or []
         self.resource_version = None
-        self.ignore_patterns = [b for b in (a.strip() for a in self.ignore_patterns) if b]
+        self.ignore_patterns = [b for b in (clean_pattern(a) for a in self.ignore_patterns) if b]
 
     def run(self):
         try:
@@ -177,7 +179,7 @@ class SlackHandler:
                 'short': True,
             }, {
                 'title': 'From',
-                'value': format_event_source(event.source),
+                'value': format_event_source(event),
             }],
         }
 
@@ -228,9 +230,10 @@ def format_timedelta(td):
     return '{}y'.format(years)
 
 
-def format_event_source(source):
+def format_event_source(event):
+    source = event.source
     if source.host:
-        return '{}, {}'.format(source.component, source.host)
+        return f'{source.component}/{source.host}'
     else:
         return source.component
 
@@ -248,7 +251,8 @@ def shutdown(signum, frame):
 def format_event(event):
     obj = format_involved_object(event)
     kind = format_involved_object_kind(event)
-    return f'{kind}:{obj}:{event.reason}'
+    src = format_event_source(event)
+    return f'{kind}:{obj}:{event.reason}({src})'
 
 
 def format_involved_object(event):
@@ -263,6 +267,16 @@ def format_involved_object_kind(event):
         return event.involved_object.kind
     else:
         return ''
+
+
+def clean_pattern(pat):
+    pat = pat.strip()
+    if not pat:
+        return pat
+
+    if not extended_pat_re.fullmatch(pat):
+        pat += '(*)'
+    return pat
 
 
 if __name__ == '__main__':
