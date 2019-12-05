@@ -130,12 +130,17 @@ class WatcherThread(threading.Thread):
 
     def _safe_stream(self, func, **kwargs):
         w = kubernetes.watch.Watch()
-        try:
-            return w.stream(func, **kwargs)
-        except ValueError:
-            # workaround for the bug https://github.com/kubernetes-client/python-base/issues/57
-            log.info('The resourceVersion for the provided watch is too old. Restarting watch')
-            raise RestartException()
+        gen = w.stream(func, **kwargs)
+        while True:
+            try:
+                val = next(gen)
+            except StopIteration:
+                break
+            except ValueError:
+                # workaround for the bug https://github.com/kubernetes-client/python-base/issues/57
+                log.info('The resourceVersion for the provided watch is too old. Restarting watch')
+                raise RestartException()
+            yield val
 
     def is_ignored(self, event):
         formatted = format_event(event)
