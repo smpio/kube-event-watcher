@@ -77,12 +77,15 @@ class WatcherThread(threading.Thread):
         self.ignore_patterns = [b for b in (clean_pattern(a) for a in self.ignore_patterns) if b]
 
     def run(self):
-        try:
-            return self._run()
-        except Exception as e:
-            e.thread = self
-            self.queue.put(e)
-            raise e
+        while True:
+            try:
+                self._run()
+            except RestartException:
+                pass
+            except Exception as e:
+                e.thread = self
+                self.queue.put(e)
+                raise e
 
     def _run(self):
         v1 = kubernetes.client.CoreV1Api()
@@ -101,7 +104,6 @@ class WatcherThread(threading.Thread):
         timeout = random.randint(MIN_WATCH_TIMEOUT, MIN_WATCH_TIMEOUT * 2)
         log.info('Watching events since version %s, timeout %d seconds', self.resource_version, timeout)
 
-        w = kubernetes.watch.Watch()
         v1 = kubernetes.client.CoreV1Api()
 
         kwargs = {
@@ -111,7 +113,7 @@ class WatcherThread(threading.Thread):
         if self.resource_version:
             kwargs['resource_version'] = self.resource_version
 
-        for change in w.stream(v1.list_event_for_all_namespaces, **kwargs):
+        for change in self._safe_stream(v1.list_event_for_all_namespaces, **kwargs):
             if change['type'] == 'ERROR':
                 raise Exception(change['object'])
 
@@ -125,6 +127,15 @@ class WatcherThread(threading.Thread):
                 continue
 
             self.queue.put(event)
+
+    def _safe_stream(self, func, **kwargs):
+        w = kubernetes.watch.Watch()
+        try:
+            return w.stream(func, **kwargs)
+        except ValueError:
+            # workaround for the bug https://github.com/kubernetes-client/python-base/issues/57
+            log.info('The resourceVersion for the provided watch is too old. Restarting watch')
+            raise RestartException()
 
     def is_ignored(self, event):
         formatted = format_event(event)
@@ -277,6 +288,10 @@ def clean_pattern(pat):
     if not extended_pat_re.fullmatch(pat):
         pat += '(*)'
     return pat
+
+
+class RestartException(Exception):
+    pass
 
 
 if __name__ == '__main__':
