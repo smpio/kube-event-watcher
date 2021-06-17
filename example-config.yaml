@@ -1,0 +1,57 @@
+version: 1
+sinks:
+  stdout:
+    type: stdout
+  kube-events:
+    type: slack
+    hook_url: SECRET
+  devops:
+    type: slack
+    hook_url: SECRET
+mappings:
+- sink: stdout
+- sink: kube-events
+  exclude:
+  - Pod:*:Scheduled
+  - Pod:*:SuccessfulAttachVolume
+  - Pod:*:Pulling
+  - Pod:*:Pulled
+  - Pod:*:Created
+  - Pod:*:Started
+  - Pod:*:Killing
+  - Pod:*:NetworkNotReady
+  - Deployment:*:ScalingReplicaSet
+  - ReplicaSet:*:SuccessfulCreate
+  - ReplicaSet:*:SuccessfulDelete
+  - StatefulSet:*:SuccessfulCreate
+  - StatefulSet:*:SuccessfulDelete
+  - CronJob:*:SuccessfulCreate
+  - CronJob:*:SuccessfulDelete
+  - CronJob:*:SawCompletedJob
+  - Job:*:SuccessfulCreate
+  - Job:*:SuccessfulDelete
+  - Job:*:Completed
+  - DaemonSet:*:SuccessfulCreate
+  - DaemonSet:*:SuccessfulDelete
+  - Service:*:UpdatedLoadBalancer
+  - Service:*:EnsuringLoadBalancer
+  - Service:*:EnsuredLoadBalancer
+  - Ingress:*:CREATE
+  - Ingress:*:UPDATE
+  - ConfigMap:kube-system/cluster-autoscaler-status:*
+  - :kube-system/resource-tracker:BigQueryUpload
+  - Node:gke-c1-teamcity-sandbox-*:*
+  - '*:teamcity-sandbox/*:*'
+  - '*(kubelet/gke-c1-teamcity-sandbox-*)'
+  - Node:*:ContainerdStart
+  - Node:*:DockerStart
+  - Node:*:DockerStart
+  - Node:*:KubeletStart
+  - Node:*:NodeHasSufficientMemory
+  - Node:*:NodeHasNoDiskPressure
+  - Node:*:NodeHasSufficientPID
+  - Node:*:NodeAllocatableEnforced
+- sink: devops
+  include:
+  - 'Pod:*:ContainerRestart'
+  - 'Pod:*:BackOff'

@@ -4,8 +4,8 @@ from kew.format import format_involved_object, format_involved_object_kind, form
 
 
 class SlackHandler:
-    def __init__(self, hook_url):
-        self.hook_url = hook_url
+    def __init__(self, config):
+        self.hook_url = config['hook_url']
 
     def __call__(self, event):
         obj = format_involved_object(event)
