@@ -4,4 +4,4 @@ Kubernetes cluster events monitoring.
 
 ## Usage
 
-`./kube-event-watcher.py`
+`python3 main.py`
