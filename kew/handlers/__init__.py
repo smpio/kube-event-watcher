@@ -1,9 +1,9 @@
 from .stdout import stdout_handler
-from .slack import SlackHandler
+from .slack import slack_handler
 
 handler_ctors = {
     'stdout': stdout_handler,
-    'slack': SlackHandler,
+    'slack': slack_handler,
 }
 
 

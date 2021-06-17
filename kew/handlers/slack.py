@@ -3,10 +3,19 @@ import requests
 from kew.format import format_involved_object, format_involved_object_kind, format_event_age, format_event_source
 
 
-class SlackHandler:
+def slack_handler(config):
+    if config.get('compact'):
+        return CompactSlackHandler(config)
+    else:
+        return VerboseSlackHandler(config)
+
+
+class BaseSlackHandler:
     def __init__(self, config):
         self.hook_url = config['hook_url']
 
+
+class VerboseSlackHandler(BaseSlackHandler):
     def __call__(self, event):
         obj = format_involved_object(event)
         kind = format_involved_object_kind(event)
@@ -46,4 +55,15 @@ class SlackHandler:
         }
 
         resp = requests.post(self.hook_url, json=payload, timeout=5)
+        resp.raise_for_status()
+
+
+class CompactSlackHandler(BaseSlackHandler):
+    def __call__(self, event):
+        obj = format_involved_object(event)
+        kind = format_involved_object_kind(event)
+        msg = f'**{kind} {obj} – {event.reason}**\n{event.message.strip()}'
+        resp = requests.post(self.hook_url, json={
+            'text': msg,
+        }, timeout=5)
         resp.raise_for_status()

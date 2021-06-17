@@ -8,6 +8,7 @@ sinks:
   devops:
     type: slack
     hook_url: SECRET
+    compact: yes
 mappings:
 - sink: stdout
 - sink: kube-events
