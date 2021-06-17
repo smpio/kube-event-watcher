@@ -45,15 +45,15 @@ class HandlerThread(SupervisedThread):
     def run_supervised(self):
         while True:
             event = self.queue.get()
-            try:
-                self.handle(event)
-            except Exception:
-                log.exception('Failed to handle event')
+            self.handle(event)
 
     def handle(self, event):
         for mapping in self.config.mappings:
             if mapping.does_match(event):
-                mapping.sink(event)
+                try:
+                    mapping.sink(event)
+                except Exception:
+                    log.exception('Failed to handle event')
 
 
 class WatcherThread(SupervisedThread):
