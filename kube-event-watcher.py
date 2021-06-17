@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
 
 import re
-import sys
 import queue
-import signal
-import random
 import logging
 import fnmatch
 import argparse
 import datetime
-import threading
 
 import requests
 import kubernetes.client
-import kubernetes.client.rest
-import kubernetes.config
-from urllib3.exceptions import ReadTimeoutError
+
+from utils.kubernetes.config import configure
+from utils.signal import install_shutdown_signal_handlers
+from utils.kubernetes.watch import KubeWatcher, WatchEventType
+from utils.threading import SupervisedThread, SupervisedThreadGroup
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +23,8 @@ extended_pat_re = re.compile(r'.*\(.*\)')
 
 def main():
     arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument('--in-cluster', action='store_true', help='configure with in cluster kubeconfig')
+    arg_parser.add_argument('--master', help='kubernetes api server url')
+    arg_parser.add_argument('--in-cluster', action='store_true', help='configure with in-cluster config')
     arg_parser.add_argument('--log-level', default='WARNING')
     arg_parser.add_argument('--slack-hook-url', help='send events to Slack')
     arg_parser.add_argument('--stdout', action='store_true', help='print events to stdout')
@@ -35,40 +34,40 @@ def main():
 
     logging.basicConfig(format='%(levelname)s: %(message)s', level=args.log_level)
 
-    if args.in_cluster:
-        kubernetes.config.load_incluster_config()
-    else:
-        configuration = kubernetes.client.Configuration()
-        configuration.host = 'http://127.0.0.1:8001'
-        kubernetes.client.Configuration.set_default(configuration)
-
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
-
-    q = queue.Queue()
-
-    watcher = WatcherThread(q, args.ignore)
-    watcher.start()
+    configure(args.master, args.in_cluster)
+    install_shutdown_signal_handlers()
 
     handlers = []
-
     if args.stdout:
         handlers.append(print_handler)
     if args.slack_hook_url:
         handlers.append(SlackHandler(args.slack_hook_url))
 
-    while True:
-        event = q.get()
-
-        if isinstance(event, Exception):
-            event.thread.join()
-            sys.exit(1)
-
-        for handle in handlers:
-            handle(event)
+    q = queue.Queue()
+    threads = SupervisedThreadGroup()
+    threads.add_thread(WatcherThread(q, args.ignore))
+    threads.add_thread(HandlerThread(q, handlers))
+    threads.start_all()
+    threads.wait_any()
 
 
-class WatcherThread(threading.Thread):
+class HandlerThread(SupervisedThread):
+    def __init__(self, queue, handlers):
+        super().__init__()
+        self.queue = queue
+        self.handlers = handlers
+
+    def run_supervised(self):
+        while True:
+            event = self.queue.get()
+            for handle in self.handlers:
+                try:
+                    handle(event)
+                except Exception:
+                    log.exception('Failed to handle event')
+
+
+class WatcherThread(SupervisedThread):
     def __init__(self, queue, ignore_patterns=None):
         super().__init__(daemon=True)
         self.queue = queue
@@ -76,71 +75,20 @@ class WatcherThread(threading.Thread):
         self.resource_version = None
         self.ignore_patterns = [b for b in (clean_pattern(a) for a in self.ignore_patterns) if b]
 
-    def run(self):
-        while True:
-            try:
-                self._run()
-            except RestartException:
-                pass
-            except Exception as e:
-                e.thread = self
-                self.queue.put(e)
-                raise e
-
-    def _run(self):
+    def run_supervised(self):
         v1 = kubernetes.client.CoreV1Api()
-        event_list = v1.list_event_for_all_namespaces()
-        self.resource_version = event_list.metadata.resource_version
+        watcher = iter(KubeWatcher(v1.list_event_for_all_namespaces))
 
-        while True:
-            try:
-                self._watch()
-            except ReadTimeoutError:
-                log.info('Watch timeout')
-            else:
-                log.info('Watch connection closed')
+        for event_type, event in watcher:
+            if event_type == WatchEventType.DONE_INITIAL:
+                break
 
-    def _watch(self):
-        timeout = random.randint(MIN_WATCH_TIMEOUT, MIN_WATCH_TIMEOUT * 2)
-        log.info('Watching events since version %s, timeout %d seconds', self.resource_version, timeout)
-
-        v1 = kubernetes.client.CoreV1Api()
-
-        kwargs = {
-            'timeout_seconds': timeout,
-            '_request_timeout': timeout + 5,
-        }
-        if self.resource_version:
-            kwargs['resource_version'] = self.resource_version
-
-        for change in self._safe_stream(v1.list_event_for_all_namespaces, **kwargs):
-            if change['type'] == 'ERROR':
-                raise Exception(change['object'])
-
-            event = change['object']
-            self.resource_version = event.metadata.resource_version
-
-            if change['type'] != 'ADDED':
+        for event_type, event in watcher:
+            if event_type != WatchEventType.ADDED:
                 continue
-
             if self.is_ignored(event):
                 continue
-
             self.queue.put(event)
-
-    def _safe_stream(self, func, **kwargs):
-        w = kubernetes.watch.Watch()
-        gen = w.stream(func, **kwargs)
-        while True:
-            try:
-                val = next(gen)
-            except StopIteration:
-                break
-            except ValueError:
-                # workaround for the bug https://github.com/kubernetes-client/python-base/issues/57
-                log.info('The resourceVersion for the provided watch is too old. Restarting watch')
-                raise RestartException()
-            yield val
 
     def is_ignored(self, event):
         formatted = format_event(event)
@@ -203,7 +151,8 @@ class SlackHandler:
             'attachments': [attachment],
         }
 
-        requests.post(self.hook_url, json=payload, timeout=5)
+        resp = requests.post(self.hook_url, json=payload, timeout=5)
+        resp.raise_for_status()
 
 
 def format_event_age(event):
@@ -254,16 +203,6 @@ def format_event_source(event):
         return source.component
 
 
-def shutdown(signum, frame):
-    """
-    Shutdown is called if the process receives a TERM signal. This way
-    we try to prevent an ugly stacktrace being rendered to the user on
-    a normal shutdown.
-    """
-    log.info("Shutting down")
-    sys.exit(0)
-
-
 def format_event(event):
     obj = format_involved_object(event)
     kind = format_involved_object_kind(event)
@@ -293,10 +232,6 @@ def clean_pattern(pat):
     if not extended_pat_re.fullmatch(pat):
         pat += '(*)'
     return pat
-
-
-class RestartException(Exception):
-    pass
 
 
 if __name__ == '__main__':
