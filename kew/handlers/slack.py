@@ -13,6 +13,7 @@ def slack_handler(config):
 class BaseSlackHandler:
     def __init__(self, config):
         self.hook_url = config['hook_url']
+        self.header = config.get('header')
 
 
 class VerboseSlackHandler(BaseSlackHandler):
@@ -54,6 +55,9 @@ class VerboseSlackHandler(BaseSlackHandler):
             'attachments': [attachment],
         }
 
+        if self.header:
+            payload['text'] = self.header
+
         resp = requests.post(self.hook_url, json=payload, timeout=5)
         resp.raise_for_status()
 
@@ -63,6 +67,8 @@ class CompactSlackHandler(BaseSlackHandler):
         obj = format_involved_object(event)
         kind = format_involved_object_kind(event)
         msg = f'**{kind} {obj} – {event.reason}**\n{event.message.strip()}'
+        if self.header:
+            msg = f'{self.header}\n{msg}'
         resp = requests.post(self.hook_url, json={
             'text': msg,
         }, timeout=5)
