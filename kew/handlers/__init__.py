@@ -1,9 +1,11 @@
-from .stdout import stdout_handler
-from .slack import slack_handler
+from .stdout import StdoutHandler
+from .slack import SlackHandler
+from .http_post import HttpPostHandler
 
 handler_ctors = {
-    'stdout': stdout_handler,
-    'slack': slack_handler,
+    'stdout': StdoutHandler,
+    'slack': SlackHandler,
+    'http_post': HttpPostHandler,
 }
 
 

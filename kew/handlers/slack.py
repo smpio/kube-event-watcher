@@ -1,75 +1,65 @@
-import requests
-
-from kew.format import format_involved_object, format_involved_object_kind, format_event_age, format_event_source
+from .http_post import HttpPostHandler
 
 
-def slack_handler(config):
-    if config.get('compact'):
-        return CompactSlackHandler(config)
-    else:
-        return VerboseSlackHandler(config)
-
-
-class BaseSlackHandler:
+class SlackHandler(HttpPostHandler):
     def __init__(self, config):
-        self.hook_url = config['hook_url']
-        self.header = config.get('header')
+        if not config.get('template'):
+            config['template_context'] = CONTEXT
+            if config.get('compact'):
+                config['template'] = COMPACT_TEMPLATE
+            else:
+                config['template'] = VERBOSE_TEMPLATE
+        super().__init__(config)
 
 
-class VerboseSlackHandler(BaseSlackHandler):
-    def __call__(self, event):
-        obj = format_involved_object(event)
-        kind = format_involved_object_kind(event)
+CONTEXT = '''
+obj = escape_json(format_involved_object(event))
+kind = escape_json(format_involved_object_kind(event))
+reason = escape_json(event.reason)
+msg = escape_json(event.message)
+color = 'warning' if event.type.lower() == 'warning' else 'good'
+'''
 
-        attachment = {
-            'color': 'warning' if event.type.lower() == 'warning' else 'good',
-            'fallback': f'{kind} {obj}: {event.message}',
-            'fields': [{
-                'title': 'Namespace',
-                'value': event.metadata.namespace,
-            }, {
-                'title': kind,
-                'value': obj,
-            }, {
-                'title': 'Message',
-                'value': event.message.strip(),
-            }, {
-                'title': 'Reason',
-                'value': event.reason,
-                'short': True,
-            }, {
-                'title': 'Type',
-                'value': event.type,
-                'short': True,
-            }, {
-                'title': 'Age',
-                'value': format_event_age(event),
-                'short': True,
-            }, {
-                'title': 'From',
-                'value': format_event_source(event),
-            }],
-        }
+COMPACT_TEMPLATE = '{{"text": "**{kind} {obj} – {reason}**\\n{msg}"}}'
 
-        payload = {
-            'attachments': [attachment],
-        }
-
-        if self.header:
-            payload['text'] = self.header
-
-        resp = requests.post(self.hook_url, json=payload, timeout=5)
-        resp.raise_for_status()
-
-
-class CompactSlackHandler(BaseSlackHandler):
-    def __call__(self, event):
-        obj = format_involved_object(event)
-        kind = format_involved_object_kind(event)
-        msg = f'**{kind} {obj} – {event.reason}**\n{event.message.strip()}'
-        if self.header:
-            msg = f'{self.header}\n{msg}'
-        resp = requests.post(self.hook_url, json={
-            'text': msg,
-        }, timeout=5)
-        resp.raise_for_status()
+VERBOSE_TEMPLATE = '''
+{{
+    "attachments": [{{
+        "color": "{color}",
+        "fallback": "**{kind} {obj} – {reason}**\\n{msg}",
+        "fields": [
+            {{
+                "title": "Namespace",
+                "value": "{escape_json(event.metadata.namespace)}"
+            }},
+            {{
+                "title": "{kind}",
+                "value": "{obj}"
+            }},
+            {{
+                "title": "Message",
+                "value": "{msg}"
+            }},
+            {{
+                "title": "Reason",
+                "value": "{escape_json(event.reason)}",
+                "short": true
+            }},
+            {{
+                "title": "Type",
+                "value": "{escape_json(event.type)}",
+                "short": true
+            }},
+            {{
+                "title": "Age",
+                "value": "{escape_json(format_event_age(event))}",
+                "short": true
+            }},
+            {{
+                "title": "From",
+                "value": "{escape_json(format_event_source(event))}"
+            }}
+        ]
+    }}]
+}}
+'''

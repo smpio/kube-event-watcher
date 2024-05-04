@@ -11,6 +11,7 @@ from utils.threading import SupervisedThread, SupervisedThreadGroup
 
 from .config import load_config
 from .format import format_event
+from .errors import HandledError
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,8 @@ class HandlerThread(SupervisedThread):
             if mapping.does_match(event):
                 try:
                     mapping.sink(event)
+                except HandledError as err:
+                    log.error('Failed to handle event: %s', err)
                 except Exception:
                     log.exception('Failed to handle event')
 
@@ -72,6 +75,7 @@ class WatcherThread(SupervisedThread):
         for event_type, event in watcher:
             if event_type != WatchEventType.ADDED:
                 continue
+            event.message = event.message.strip()
             event._formatted = format_event(event)
             self.queue.put(event)
 
