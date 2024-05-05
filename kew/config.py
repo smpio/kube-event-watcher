@@ -1,12 +1,9 @@
-import re
-from fnmatch import fnmatch
-
 import yaml
 
 from .handlers import get_handler
+from .matcher import prepare_patterns, event_does_match_any_pattern
 
 VERSION = 1
-extended_pat_re = re.compile(r'.*\(.*\)')
 
 
 def load_config(filename):
@@ -36,30 +33,14 @@ class Config:
 class Mapping:
     def __init__(self, sink, include, exclude):
         self.sink = sink
-        self.include = _clean_patterns(include)
-        self.exclude = _clean_patterns(exclude)
+        self.include = prepare_patterns(include)
+        self.exclude = prepare_patterns(exclude)
 
     def does_match(self, event):
         if self.include is not None:
-            if not any((fnmatch(event._formatted, pat) for pat in self.include)):
+            if not event_does_match_any_pattern(event, self.include):
                 return False
         if self.exclude is not None:
-            if any((fnmatch(event._formatted, pat) for pat in self.exclude)):
+            if event_does_match_any_pattern(event, self.exclude):
                 return False
         return True
-
-
-def _clean_patterns(pats):
-    if not pats:
-        return pats
-    return [b for b in (_clean_pattern(a) for a in pats) if b]
-
-
-def _clean_pattern(pat):
-    pat = pat.strip()
-    if not pat:
-        return pat
-
-    if not extended_pat_re.fullmatch(pat):
-        pat += '(*)'
-    return pat
